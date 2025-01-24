@@ -47,3 +47,16 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Ignore unblinded files
+report/unblinded_submission_manuscript.Rmd
+report/unblinded_submission_manuscript.docx
+report/cover_letter.docx
+
+# Ignore large files
+data/gadm
+data/pop
+data/wc2.1_tiles
+data/output
+!data/output/model_comparison.rds
+data/processed_data
