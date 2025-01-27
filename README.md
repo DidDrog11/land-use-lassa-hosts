@@ -45,7 +45,7 @@ This repository contains the code and data used for the analysis presented in "L
 ├── 📄 README.md            # Project description (this file)  
 └── 🛠️ session_info.txt     # Environment details for reproducibility  
 ```
-* Produced by running through the scripts
-** Available from the [OpenScienceFramework](https://osf.io/jbm6y/?view_only=8f32ac4d8659464ca468914b8f89ae99)
+\* Produced by running through the scripts
+\** Available from the [OpenScienceFramework](https://osf.io/jbm6y/?view_only=8f32ac4d8659464ca468914b8f89ae99)
 
 
