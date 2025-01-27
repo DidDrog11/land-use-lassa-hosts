@@ -81,3 +81,4 @@ names(group_landuse_palette) <- c("Forest - Rural", "Agriculture - Rural", "Agri
 # Define seasons associated with trapping sessions ------------------------
 
 season <- tibble(visit = 1:10, season = c(rep("Dry", 2), rep("Rainy", 2), rep("Dry", 2), rep("Rainy", 2), rep("Dry", 2)))
+
