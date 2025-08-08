@@ -172,3 +172,80 @@ save_plot(plot = plot_grid(plotlist = list(sl_inset_map_v2,
           filename = here("output", "figures", "Figure_1_combined.png"),
           base_height = 10,
           base_width = 8)
+
+# 1. LOAD DATA ------------------------------------------------------------
+# This data frame is a list of sf objects, one for each village.
+fig_1_df <- read_rds(here("data", "processed_data", "fig_1_df.rds"))
+
+# 2. PREPARE BACKGROUND SATELLITE IMAGERY ---------------------------------
+# This section downloads Google Maps satellite tiles for each village to serve
+# as a background for the plots.
+
+# Create bounding boxes for each village's trapping area.
+bbox <- list()
+bbox$baiama <- st_bbox(st_buffer(fig_1_df[[1]], dist = 100))
+bbox$lalehun <- st_bbox(st_buffer(fig_1_df[[2]], dist = 100))
+bbox$lambayama <- st_bbox(st_buffer(fig_1_df[[3]], dist = 100))
+bbox$seilama <- st_bbox(st_buffer(fig_1_df[[4]], dist = 100))
+
+# Download and process the raster for each village.
+# Note: This requires a Google Maps API key to be configured for ggmap.
+bg <- list()
+bg$baiama <- get_googlemap(c(-11.26, 7.832), zoom = 15, scale = 2, maptype = "satellite") %>% rast()
+bg$lalehun <- get_googlemap(st_coordinates(poi %>% filter(str_detect(name, "Lalehun"))), zoom = 15, scale = 2, maptype = "satellite") %>% rast()
+bg$lambayama <- get_googlemap(st_coordinates(poi %>% filter(str_detect(name, "Lambayama"))), zoom = 16, scale = 2, maptype = "satellite") %>% rast()
+bg$seilama <- get_googlemap(st_coordinates(poi %>% filter(str_detect(name, "Seilama"))), zoom = 16, scale = 2, maptype = "satellite") %>% rast()
+
+# 3. CREATE INDIVIDUAL PLOTS ----------------------------------------------
+# Loop through each village to create a separate ggplot object.
+
+grids_plot <- list()
+breaks <- list(
+  baiama = list(x = c(-11.265, -11.255), y = c(7.838, 7.83, 7.824)),
+  lalehun = list(x = c(-11.081, -11.079), y = c(8.194, 8.196, 8.199)),
+  lambayama = list(x = c(-11.198, -11.195, -11.192), y = c(7.8515, 7.85, 7.8485)),
+  seilama = list(x = c(-11.198, -11.195), y = c(8.124, 8.122))
+)
+
+for (i in 1:length(fig_1_df)) {
+  village_name <- unique(fig_1_df[[i]]$village)
+  
+  grids_plot[[i]] <- ggplot() +
+    geom_spatraster_rgb(data = bg[[i]]) +
+    geom_sf(
+      data = fig_1_df[[i]] %>%
+        mutate(landuse = factor(str_to_title(landuse), levels = c("Forest", "Agriculture", "Village"))),
+      aes(fill = tn, colour = tn)
+    ) +
+    scale_colour_viridis_c(limits = c(0, 100), direction = -1) +
+    scale_fill_viridis_c(limits = c(0, 100), direction = -1) +
+    facet_wrap(~ landuse) +
+    labs(fill = "Trap-Nights", color = "Trap-Nights") + # Ensure legend titles are consistent
+    coord_sf(
+      xlim = st_bbox(st_transform(st_as_sfc(bbox[[i]]), crs = default_CRS))[c(1, 3)],
+      ylim = st_bbox(st_transform(st_as_sfc(bbox[[i]]), crs = default_CRS))[c(2, 4)],
+      expand = FALSE
+    ) +
+    scale_x_continuous(breaks = breaks[[i]]$x) +
+    scale_y_continuous(breaks = breaks[[i]]$y) +
+    theme_bw() +
+    annotation_scale()
+}
+
+# 4. COMBINE PLOTS WITH PATCHWORK -----------------------------------------
+
+# Arrange the four plots into a 2x2 grid.
+combined_plot <- (grids_plot[[1]]) / (grids_plot[[2]]) / (grids_plot[[3]]) / (grids_plot[[4]]) +
+  # Use plot_layout to collect legends into a single shared legend at the bottom.
+  plot_layout(guides = 'collect') +
+  # Add A), B), C), D) tags to each panel.
+  plot_annotation(tag_levels = 'A') &
+  # Apply theme settings to the combined plot.
+  theme(legend.position = 'bottom')
+
+save_plot(
+  plot = combined_plot,
+  filename = here("output", "figures", "Supplementary_Figure_1_combined.png"),
+  base_height = 16,
+  base_width = 14
+)

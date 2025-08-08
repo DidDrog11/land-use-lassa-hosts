@@ -1,18 +1,38 @@
+# ---
+# title: "01: Load and Process Raw Trapping Data"
+# ---
+
+# This script is the first step in the data processing pipeline. It performs the
+# following key tasks:
+# 1. Loads the raw, cleaned rodent and trap data from CSV files.
+# 2. Standardizes trap locations into a regular 7x7m grid system ('sites'). This
+#    is a crucial step to create consistent analytical units over time, as the
+#    physical location of traps could vary slightly between visits.
+# 3. Generates and saves all necessary detection and occurrence covariates.
+# 4. Saves a final list object ('descriptive_data.rds') containing all the
+#    processed data needed for downstream descriptive analysis and modeling.
+
+# 0. SETUP ------------------------------------------------------------------
+
 source(here::here("R", "00_setup.R"))
 
-# Cleaned rodent and trap data is imported #
+# 1. LOAD RAW DATA --------------------------------------------------------
+
+# Import the cleaned rodent capture data and the trap deployment data.
 
 combined_data <- list()
 
 combined_data$trap_data <- read_csv(here("data", "input", "trap_data.csv"))
 combined_data$rodent_data <- read_csv(here("data", "input", "rodent_data.csv"))
 
-# Prepare data into sites and detections ----------------------------------
+# 2. INITIAL DATA PREPARATION ---------------------------------------------
 
+# Prepare the detections data frame with a unique identifier for each trap deployment.
 detections <- combined_data$rodent_data %>%
   # remove trap night from trap_uid as this will be accounted for as a detection covariate
   mutate(trap_uid = paste0(village, "_", visit, "_", grid_number, "_", trap_number)) %>%
   select(rodent_id = rodent_uid, village, visit, grid_number, trap_number, trap_uid, clean_names) %>%
+  # Count the number of individuals of the same species in the same trap.
   group_by(trap_uid, clean_names) %>%
   mutate(n = n())
 
@@ -22,6 +42,7 @@ detections <- combined_data$rodent_data %>%
 # trap in a subsequent visit. To do this we convert coordinates to projected  #
 # UTM 29N for Sierra Leone this is EPSG:32629.                                #
 
+# Prepare the sites data frame by cleaning coordinates and defining land use.
 sites <- combined_data$trap_data %>%
   select(date_set, village, trap_uid, visit, grid_number, trap_number, habitat_group, habitat, site_use, elevation, geometry) %>%
   filter(village != "bambawo") %>% # remove Bambawo as only used for one replicate
@@ -47,9 +68,11 @@ sites <- combined_data$trap_data %>%
   mutate(trap_easting = st_coordinates(geometry)[, 1],
          trap_northing = st_coordinates(geometry)[, 2])
 
-# Assign trap locations to grid cells -------------------------------------
+# 3. STANDARDIZE TRAP LOCATIONS INTO GRID CELLS ('SITES') -----------------
 
-
+# This function takes all physical trap locations and assigns them to a
+# standardized 7x7m grid. This creates consistent analytical "sites" that
+# can be compared across different trapping visits.
 assign_traps_to_cells <- function(all_sites = sites) {
   
   # create list where each element is a grid from a village containing all  #
@@ -173,11 +196,10 @@ visualise_sites_in_grid <- lapply(sites_in_grid, function(x) {
   
 })
 
-# Detection covariates ----------------------------------------------------
+# 4. GENERATE DETECTION COVARIATES ----------------------------------------
+# These are covariates that vary by site and visit.
 
-# Trap nights -------------------------------------------------------------
-# Multiple traps are allocated to a single grid cell and 4 trap nights were conducted per trap
-# We will use this as a measure of effort for detection
+# --- 4.1. Trapping Effort (Trap Nights) ---
 
 trap_nights <- lapply(sites_in_grid, function(X) {
   
@@ -202,9 +224,8 @@ date_set <- bind_rows(sites_in_grid) %>%
 
 write_rds(date_set, here("data", "processed_data", "date_set.rds"))
 
-# Monthly rainfall --------------------------------------------------------
-# For the precipitation data we need to provide lon and lat points.     #
-# We extract the centre of the trapping sites for this.                 #
+# --- 4.2. Monthly Rainfall ---
+# Extract precipitation data from WorldClim for each site location and month.
 spatial_traps <- bind_rows(sites_in_grid) %>%
   st_as_sf(coords = c("site_easting", "site_northing")) %>%
   st_set_crs(value = SL_UTM)
@@ -241,8 +262,8 @@ month_split <- lapply(function(X) {
   return(X)
 }, X = month_split)
 
-# Moon phase --------------------------------------------------------------
-
+# --- 4.3. Moon Phase ---
+# Calculate the fraction of moon illumination for each trapping date.
 month_split <- lapply(function(X) {
   
   date_trap <- ymd(unique(X$date_set))
@@ -262,7 +283,7 @@ rain_moon <- bind_rows(month_split) %>%
   tibble() %>%
   select(site_id, visit, precipitation, moon_fraction)
 
-# Detection covariates combined -------------------------------------------
+# --- 4.4. Combine and Save Detection Covariates ---
 
 detection_covariates <- left_join(bind_rows(sites_in_grid), rain_moon, by = c("unique_site" = "site_id", "visit")) %>%
   left_join(trap_nights, by = c("unique_site", "visit")) %>%
@@ -272,15 +293,16 @@ detection_covariates <- left_join(bind_rows(sites_in_grid), rain_moon, by = c("u
 write_rds(detection_covariates, here("data", "processed_data", "detection_covariates.rds"))
 
 
-# Occurrence covariates ---------------------------------------------------
-# The primary outcome is the effect of habitat type on occurrence we extract this from the site data
+# 5. GENERATE OCCURRENCE COVARIATES ---------------------------------------
+# These are covariates that are static for each site.
 
 if(!file.exists(here("data", "processed_data", "occurrence_covariates.rds"))) {
   
   land_use <- bind_rows(sites_in_grid) %>%
     select(site_id = unique_site, landuse)
   
-  # Get the bounding box of the village and buffer it by 100m before downloading from OSM
+  # --- 5.1. Distance to Building ---
+  # Calculate the distance from each site to the nearest building using OpenStreetMap data.
   
   distance_from_building <- function(data = spatial_traps, village_name) {
     
@@ -333,10 +355,7 @@ if(!file.exists(here("data", "processed_data", "occurrence_covariates.rds"))) {
     tibble() %>%
     distinct(site_id, distance_centre)
   
-  # Elevation will also be used as an occurrence covariate
-  # This method is currently failing due to an invalid/expired certificate
-  # elevation_3s(lon = tile_coords[1], lat = tile_coords[2], path = here("data", "geodata"))
-  # Will use the elevatr package instead for this we need a data.frame with the centre of each village
+  # --- 5.2. Elevation and Population ---
   
   elevation_rast <- get_elev_raster(locations = village_coords %>%
                                       st_transform(crs = default_CRS), prj = default_CRS, z = 12) %>%
@@ -374,7 +393,7 @@ if(!file.exists(here("data", "processed_data", "occurrence_covariates.rds"))) {
   
   population <- data.frame(population_vect)
   
-  # Occurrence covariates combined ------------------------------------------
+  # --- 5.3. Combine and Save Occurrence Covariates ---
   
   occurrence_covariates <- bind_rows(sites_in_grid) %>%
     distinct(site_id = unique_site, village) %>%

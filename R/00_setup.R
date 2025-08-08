@@ -21,6 +21,7 @@ pkgs =
     "lubridate",
     "mapview",
     "osmdata",
+    "patchwork",
     "RColorBrewer",
     "RhpcBLASctl",
     "rmapshaper",
@@ -63,12 +64,12 @@ names(landuse_palette) <- c("Forest", "Agriculture", "Village")
 
 # Species are ordered by n detected except the Shrew species is moved to after the Rodent species
 
-all_species_order <- c("Mastomys natalensis", "Praomys rostratus", "Rattus rattus", "Mus musculus", "Lophuromys sikapusi", "Mus setulosus",
-                       "Crocidura olivieri", "Crocidura buettikoferi", "Crocidura grandiceps", "Malacomys edwardsi", "Lemniscomys striatus",
+all_species_order <- c("Mastomys natalensis", "Crocidura olivieri", "Praomys rostratus", "Mus musculus", "Rattus rattus", "Lophuromys sikapusi", "Mus setulosus",
+                       "Crocidura buettikoferi", "Crocidura grandiceps", "Malacomys edwardsi", "Lemniscomys striatus",
                        "Hylomyscus simus", "Hybomys planifrons", "Mastomys erythroleucus", "Crocidura theresae", "Gerbilliscus guineae", "Dasymys rufulus")
 
-species_order_plots <- c("Mastomys natalensis", "Praomys rostratus", "Rattus rattus", "Mus musculus", "Lophuromys sikapusi", "Mus setulosus",
-                         "Crocidura olivieri", "Crocidura buettikoferi", "Crocidura grandiceps", "Malacomys edwardsi", "Lemniscomys striatus",
+species_order_plots <- c("Mastomys natalensis", "Crocidura olivieri", "Praomys rostratus", "Mus musculus", "Rattus rattus", "Lophuromys sikapusi", "Mus setulosus",
+                         "Crocidura buettikoferi", "Crocidura grandiceps", "Malacomys edwardsi", "Lemniscomys striatus",
                          "Hylomyscus simus", "Hybomys planifrons", "Mastomys erythroleucus", "Crocidura theresae", "Gerbilliscus guineae", "Dasymys rufulus")
 
 

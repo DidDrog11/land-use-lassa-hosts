@@ -1,33 +1,52 @@
-# First step is to make the data into the required format. The load_data.R  #
-# script has read in the data and performed the initial reshaping of the    #
-# data. The next steps are to do this for the multi-species model           #
+# ---
+# title: "03: Multi-species Occupancy Model Setup and Execution"
+# ---
+
+# This script prepares the data for and runs the multi-species occupancy models
+# using the spOccupancy package. It transforms the tidy data from previous steps
+# into the specific array and list formats required by the modeling functions,
+# defines and runs a series of candidate models, and saves the output.
+
+# 0. SETUP AND DATA LOADING -----------------------------------------------
 source(here::here("R", "00_setup.R"))
 
+# Load the main processed data object which contains tidy data frames for
+# detections and site/trap information.
 observed_data <- read_rds(here("data", "processed_data", "descriptive_data.rds"))
 
+# 1. INITIAL DATA PREPARATION ---------------------------------------------
+
+# Prepare the detections data frame with consistent naming.
 detections <- observed_data$detections %>%
   rename(trap_id = trap_uid,
          species = clean_names) %>%
   arrange(village, visit, grid_number)
 
+# Prepare the sites data frame, ensuring one unique row per trap deployment (trap_id).
+# This object links the physical trap location to the standardized grid cell (site_id).
 sites <- observed_data$sites_grids$select_site %>%
   bind_rows() %>%
   mutate(village = as.character(village)) %>%
   distinct(site_id = unique_site, village, visit, grid_number, site_easting, site_northing, site, trap_id = trap_uid, date_set) %>%
   arrange(village, visit, grid_number, site)
 
-# names of the sites trapping occurred at, 2068
+# Create a numeric lookup table for site IDs. spOccupancy works with numeric
+# indices, so we map the character site_id (e.g., "baiama_1_44") to a
+# numeric site_code (1 to J, where J is the total number of sites).
+# Note: The order from unique() is preserved to match the original analysis.
 site_match <- tibble(site_code = 1:length(unique(sites$site_id)),
                      site_id = unique(sites$site_id))
 site_codes <- site_match$site_code
 
+# Load pre-calculated trap nights per site per visit.
 trap_nights <- read_rds(here("data", "processed_data", "trap_nights.rds"))
 
-# Produce y --------------------------------------
+# 2. CREATE DETECTION HISTORY ARRAY (y) -----------------------------------
+# This is the core detection data for the model: a 3D array of
+# dimensions [species, site, visit]. Values are 1 (detected), 0 (not detected),
+# or NA (not sampled).
 
-# produce a long format of detections with a single record per site, visit  #
-# and species                                                               #
-
+# First, produce a long format of detections with a single record per site, visit, and species.
 y_long <- detections %>%
   left_join(sites %>%
               select(trap_id, site_id),
@@ -35,6 +54,7 @@ y_long <- detections %>%
   group_by(site_id, visit, species) %>%
   summarise(count = n())
 
+# Filter to include only species with a sufficient number of detections for modeling.
 included_species <- y_long %>%
   group_by(species) %>%
   summarise(count = sum(count)) %>%
@@ -44,10 +64,11 @@ included_species <- y_long %>%
 y_long <- y_long %>%
   filter(species %in% included_species)
 
-# names of the species trapped
+# Get the final list of species names for the array dimensions.
 sp_codes <- sort(unique(y_long$species))
 
-# define which sites were surveyed at each replicate
+# Create a lookup matrix to identify which site-visit combinations were not sampled.
+# This is used to correctly place NAs in the 'y' array.
 trap_nights_df <- site_match %>%
   left_join(trap_nights) %>%
   arrange(visit) %>%
@@ -57,7 +78,7 @@ trap_nights_df <- site_match %>%
   arrange(site_code) %>%
   select(-site_id)
 
-# associate sites with number in site_match
+# Add the numeric site_code to the long detection data for array creation.
 y_long <- y_long %>%
   left_join(site_match, by = "site_id") %>%
   group_by(site_code) %>%
@@ -68,6 +89,8 @@ write_rds(y_long, here("data", "processed_data", "y_long.rds"))
 
 non_0_site_code <- unique(y_long$site_code)
 
+
+# Define the dimensions of the array.
 # number of species
 N <- length(sp_codes)
 
@@ -77,6 +100,8 @@ K <- max(sites$visit)
 # number of sites
 J <- length(site_codes)
 
+# This loop creates the y array and is wrapped in an if(!file.exists()) call
+# to avoid re-running this time-consuming step.
 if(!file.exists(here("data", "processed_data", "y_sp.rds"))) {
   
   y = array(NA, dim = c(N, J, K), dimnames = list(sp_codes, site_codes[1:J], 1:K))
@@ -130,12 +155,13 @@ observed_species <- tibble(species = names(apply(y, 1, sum, na.rm = TRUE)),
                              arrange(species) %>%
                              pull(n))
 
-# Produce detection covariates --------------------------------------------
-# here we add covariates that can impact the probability of detecting a rodent if it is present
+# 3. FORMAT COVARIATES FOR spOccupancy ------------------------------------
 
+# --- 3.1. Detection Covariates ---
+# Covariates must be in a list of matrices, where each matrix is site x visit.
 if(!file.exists(here("data", "processed_data", "det_covs_sp.rds"))) {
   
-  raw_det <- read_rds(here("data", "observed_data", "detection_covariates.rds")) %>%
+  raw_det <- read_rds(here("data", "processed_data", "detection_covariates.rds")) %>%
     left_join(site_match, by = c("site_id")) %>%
     distinct(site_id, site_code, visit, precipitation, moon_fraction, trap_nights) %>%
     arrange(site_code)
@@ -170,7 +196,10 @@ if(!file.exists(here("data", "processed_data", "det_covs_sp.rds"))) {
   
 }
 
-# Produce occurrence covariates -------------------------------------------
+
+# --- 3.2. Occurrence Covariates ---
+# These covariates are static for each site.
+# Load the tidy data frame, which has one row per site.
 raw_occ <- read_rds(here("data", "processed_data", "occurrence_covariates.rds")) %>%
   left_join(site_match, by = c("site_id")) %>%
   mutate(village = as.character(village),
@@ -202,6 +231,8 @@ elevation_mat <- matrix(NA, nrow = J, ncol = 1)
 population_mat <- matrix(NA, nrow = J, ncol = 1)
 population_q_mat <- matrix(NA, nrow = J, ncol = 1)
 
+# Convert the data frame into a list of vectors/matrices as required by spOccupancy.
+# A loop is used to ensure the order of sites is preserved correctly.
 for(j in 1:J) {
   landuse_mat[[j]] <- raw_occ$landuse[[j]]
   village_mat[[j]] <- raw_occ$village[[j]]
@@ -214,6 +245,7 @@ for(j in 1:J) {
   population_q_mat[[j]] <- raw_occ$pop_quartile[[j]]
 }
 
+# Ensure categorical variables are correctly formatted as factors with desired levels.
 occ_covs <- list(landuse = factor(landuse_mat, levels = c("forest", "agriculture", "village")),
                  village = factor(village_mat, levels = c(village_order)),
                  setting = factor(setting_mat, levels = c("rural", "peri-urban")),
@@ -227,7 +259,9 @@ occ_covs <- list(landuse = factor(landuse_mat, levels = c("forest", "agriculture
 
 write_rds(occ_covs, here("data", "processed_data", "occ_covs_list.rds"))
 
-# Format site coordinates -------------------------------------------------
+
+# --- 3.3. Site Coordinates ---
+# Format coordinates into a J x 2 matrix.
 coords <- read_rds(here("data", "processed_data", "site_coords.rds"))
 
 coords <- tibble(X = coords[, 1],
@@ -253,15 +287,16 @@ diag(lambda_inits) <- 1
 
 lambda_inits[lower.tri(lambda_inits)] <- rnorm(sum(lower.tri(lambda_inits)))
 
-# Create list object ------------------------------------------------------
+# 4. CREATE FINAL DATA OBJECT FOR spOccupancy -----------------------------
 
 data_msom_spatial <- list(y = y,
                           occ.covs = as.data.frame(occ_covs),
                           det.covs = det_covs,
                           coords = coords)
 
-# Multi-species occupancy model --------------------------------------------
-# 
+# 5. DEFINE AND RUN MODELS ------------------------------------------------
+# Note: Full model runs are computationally intensive. The code is structured
+# to run only if the output file does not already exist.
 # Model outputs are large ~700mb
 # Because of this they are ignored in the .gitignore file
 # They also take a long time to run ~ 3h for each
@@ -269,6 +304,8 @@ data_msom_spatial <- list(y = y,
 # It is available at this link https://osf.io/jbm6y/?view_only=8f32ac4d8659464ca468914b8f89ae99
 # Place the model in data/output/model and run the code from line 420-450
 # The model comparison code from line 950 should continue to work as the model comparison data has been saved
+
+# --- 5.1. Model Formulas ---
 
 ## Model formulae ----------------------------------------------------------
 
@@ -325,7 +362,8 @@ ms_inits_spatial <- list(alpha.comm = 0,
                          phi = 3 / mean(dist_sites),
                          z = apply(data_msom_spatial$y, c(1, 2), max, na.rm = TRUE))
 
-# Prior values spatial
+
+# --- 5.2. MCMC Settings, Priors, and Initial Values ---
 min_dist <- min(dist_sites)
 max_dist <- max(dist_sites)
 
@@ -337,6 +375,8 @@ ms_priors_spatial <- list(beta.comm.normal = list(mean = 0, var = 2.72),
                           phi.unif = list(a = 3 / max_dist, b = 3 / min_dist))
 
 
+# --- 5.3. Model Execution Blocks ---
+# Each if(!file.exists(...)) block runs a specific candidate model.
 # M0 Intercept model ---------------------------------------------------------
 if(!file.exists(here("data", "output", "model", "spatial_int.rds"))) {
   
@@ -946,8 +986,9 @@ waicOcc(out_ms_spatial_8)
 waicOcc(out_ms_spatial_11)
 
 
-# Model selection ---------------------------------------------------------
 
+# 6. MODEL SELECTION ------------------------------------------------------
+# This block reads all saved model objects and compares them using WAIC.
 if(file.exists(here("data", "output", "model", "spatial_int.rds"))) {
   
   waic <- bind_rows(waicOcc(out_ms_spatial_int),
@@ -986,7 +1027,7 @@ if(file.exists(here("data", "output", "model", "spatial_int.rds"))) {
 model_comparison
 
 summary(out_ms_spatial_2)
-
+# Select and save the final model based on the comparison.
 final_model <- out_ms_spatial_2
 
 write_rds(final_model, here("data", "output", "model", "final_model.rds"))

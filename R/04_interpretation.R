@@ -1,7 +1,18 @@
+# ---
+# title: "04: Model Interpretation and Visualization"
+# ---
+
+# This script loads the final, best-fit multi-species occupancy model and
+# generates key outputs for interpretation, including posterior predictive checks,
+# coefficient plots, and the main results figure (Figure 3) showing the
+# probability of occurrence across land use gradients, as well as supplementary
+# figures showing the marginal effects of detection covariates.
+
+# 0. SETUP AND DATA LOADING -----------------------------------------------
+
 source(here::here("R", "00_setup.R"))
 
-# Load data ---------------------------------------------------------------
-
+# Load the necessary data objects created in the previous scripts.
 y_long <- read_rds(here("data", "processed_data", "y_long.rds"))
 occ_covs <- read_rds(here("data", "processed_data", "occ_covs_df.rds")) %>%
   mutate(landuse = factor(landuse, levels = c("forest", "agriculture", "village")),
@@ -11,28 +22,31 @@ occ_covs <- read_rds(here("data", "processed_data", "occ_covs_df.rds")) %>%
                                                           "village - rural", "village - peri-urban")))
 det_covs <- read_rds(here("data", "processed_data", "det_covs_sp.rds"))
 
-# included species
+# Define the list of species included in the final model.
 sp_codes <- sort(unique(y_long$species))
 N <- length(sp_codes)
 
-# Load models -------------------------------------------------------------
-
+# Load the final model object and its posterior predictive check object.
 final_model <- read_rds(here("data", "output", "model", "final_model.rds"))
 final_ppc <- read_rds(here("data", "output", "model", "final_ppc.rds"))
 
-# Interpretation ----------------------------------------------------------
+# 1. MODEL DIAGNOSTICS AND VALIDATION -------------------------------------
+
+# Display a summary of the model's parameter estimates, including convergence diagnostics (R-hat, ESS).
 summary(final_model)
 
-# Check mixing
-plot(final_model$beta.samples, density = FALSE)
+# Visually inspect MCMC chain mixing for key parameter groups (optional).
+# plot(final_model$beta.samples, density = FALSE)
+# plot(final_model$alpha.samples, density = FALSE)
 
-plot(final_model$alpha.samples, density = FALSE)
-
-# Posterior predictive checks
-# Bayesian p-value around 0.5 indicates adequate model fit, with values less than 0.1 or greater than 0.9 indicating poor fit.
+# Review the posterior predictive check results.
+# A Bayesian p-value around 0.5 indicates adequate model fit, while values
+# less than 0.1 or greater than 0.9 suggest poor fit.
 summary(final_ppc)
 
-# Visualise species PPC
+# This function creates a scatterplot comparing the fit statistic (chi-squared)
+# for the observed data versus the data replicated from the fitted model.
+# Points falling along the 1:1 line indicate a good fit.
 ppc_vis <- function(data = final_ppc) {
   
   ppc_df <- tibble(ppv = c(rep(1:length(data$fit.y[,1]), times = 2)),
@@ -74,8 +88,10 @@ save_plot(here("output", "figures", "observed_fitted_comparison.png"), ppc_plot,
 
 # Probability of occurrence -----------------------------------------------
 
-## Species occurrence plots ------------------------------------------
-## Plots the probability of occurrence of each species at each grid cell
+# 2. GENERATE FIGURE 3 (Probability of Occurrence) ------------------------
+
+# This function extracts the posterior samples for the probability of occurrence (psi),
+# calculates the median for each site, and generates the main results plot.
 species_plots <- function(data = final_model) {
   
   d0 <- as.data.frame.table(final_model$psi.samples) # Extract all the posterior draws for each site and species
@@ -207,10 +223,10 @@ visualise_check <- ggplot(check_model) +
 
 save_plot(plot = plots$landuse_urbanisation_plot, filename = here("output", "figures", "Figure_3.png"), base_width = 8, base_height = 8)
 
-# Marginal effects occurrence ---------------------------------------------
+# 3. GENERATE SUPP. FIGURES (Marginal Effects of Detection Covs) ----------
 
-## Species occurrence by distance from building and elevation ----------------------------
-
+# This function predicts and plots the marginal effect of each detection covariate
+# on the probability of detection (p), holding other covariates at their mean value.
 scaling_pred <- occ_covs %>%
   mutate(scaled_distance_building = scale(distance_building)[,1],
          scaled_elevation = scale(elevation)[,1],

@@ -1,11 +1,20 @@
+# ---
+# title: "05: Species Co-occurrence Analysis"
+# ---
+
+# This script calculates and visualizes the pairwise co-occurrence patterns
+# among the focal species. It uses the posterior median occupancy probabilities
+# from the final model to calculate Spearman's rank correlation coefficients
+# for each pair of species, stratified by land use type. This produces Figure 4.
+
+# 0. SETUP AND DATA LOADING -----------------------------------------------
+
 source(here::here("R", "00_setup.R"))
 # ggstatsploturl <- "https://cran.r-project.org/src/contrib/Archive/ggstatsplot/ggstatsplot_0.12.5.tar.gz"
 # ggstatsexpressionurl <- "https://cran.r-project.org/src/contrib/Archive/statsExpressions/statsExpressions_1.6.1.tar.gz"
 # install.packages(ggstatsexpressionurl, repos=NULL, type="source")
 # install.packages(ggstatsploturl, repos=NULL, type="source")
 library(ggstatsplot)
-
-# Load data ---------------------------------------------------------------
 
 y_long <- read_rds(here("data", "processed_data", "y_long.rds"))
 occ_covs <- read_rds(here("data", "processed_data", "occ_covs_df.rds")) %>%
@@ -20,12 +29,14 @@ det_covs <- read_rds(here("data", "processed_data", "det_covs_sp.rds"))
 sp_codes <- sort(unique(y_long$species))
 N <- length(sp_codes)
 
-# Load models -------------------------------------------------------------
-
 final_model <- read_rds(here("data", "output", "model", "final_model.rds"))
 final_ppc <- read_rds(here("data", "output", "model", "final_ppc.rds"))
 
-# Observed rodents --------------------------------------------------------
+# 1. PREPARE DATA FOR ANALYSIS --------------------------------------------
+
+# Create a summary table of observed detections by land use. This is used later
+# as a check to ensure we only run correlation tests for strata where both
+# species were actually detected.
 observed <- y_long %>%
   left_join(occ_covs) %>%
   janitor::tabyl(species, landuse)
@@ -34,6 +45,8 @@ observed_stratified <- y_long %>%
   left_join(occ_covs) %>%
   janitor::tabyl(species, setting, landuse)
 
+# Extract the posterior median occupancy probability (psi) for each species at each site.
+# This provides a single, representative value of occupancy for the correlation analysis.
 psi_list <- as.data.frame.table(final_model$psi.samples) %>%
   mutate(Site = as.integer(Var3),
          Species = factor(Var2, labels = sp_codes)) %>%
@@ -56,8 +69,10 @@ psi_species <- lapply(psi_list, function(x) {
   bind_rows()
 
 
-# Correlations for co-occurrence ------------------------------------------
+# 2. DEFINE CO-OCCURRENCE ANALYSIS FUNCTION --------------------------------
 
+# This function takes a pair of species and calculates the Spearman's rank
+# correlation between their median occupancy probabilities, stratified by land use.
 cooccurrence_plot <- function(data = psi_species, species_1 = "mastomys_natalensis", species_2 = "rattus_rattus") {
   
   paired_df <- data %>%
@@ -175,7 +190,9 @@ cooccurrence_plot <- function(data = psi_species, species_1 = "mastomys_natalens
   
 }
 
-# Correlations by landuse type ---------------------------------------------
+# 3. RUN ANALYSIS FOR ALL SPECIES PAIRS -----------------------------------
+
+# Define the list of species to include in the analysis.
 species_list <- list()
 sp_codes_2 <- c("mastomys_natalensis", "rattus_rattus", "mus_musculus", "crocidura_olivieri", "praomys_rostratus", "lophuromys_sikapusi", "mus_setulosus")
 
@@ -190,6 +207,8 @@ associations_to_test <- expand_grid(species_1 = sp_codes_2, species_2 = sp_codes
   group_by(species_1) %>%
   group_split()
 
+# This loop iterates through every species pair, calls the cooccurrence_plot
+# function, and stores the results in a list.
 correlation_list <- vector(mode = "list", length = length(sp_codes_2))
 
 for(n in 1:length(sp_codes_2)) {
@@ -213,6 +232,9 @@ for(n in 1:length(sp_codes_2)) {
 
 species_order_plots <- species_order_plots[1:7]
 
+# 4. GENERATE FIGURE 4 (Correlation Heatmap) ------------------------------
+
+# Combine the list of results into a single data frame for plotting.
 correlation_df <- lapply(correlation_list, function(x) {
   lapply(x, function(y) {
     
@@ -246,18 +268,33 @@ correlation_df_species_names <- correlation_df %>%
     species_2 = fct_relabel(species_2, ~ str_to_sentence(str_replace_all(., "_", " ")))
   )
 
-correlation_plot <- correlation_df_species_names %>%
+correlation_df_for_plot <- correlation_df_species_names %>%
+  mutate(
+    correlation_label = if_else(sig == TRUE, paste0(correlation_coef, "*"), as.character(correlation_coef))
+  )
+
+# --- 2. Create the plot with two geom_label layers ---
+correlation_plot <- correlation_df_for_plot %>%
   ggplot() +
   geom_tile(aes(x = species_2, y = species_1, fill = correlation_coef)) +
-  geom_label(data = correlation_df_species_names %>%
-               filter(sig == TRUE) %>%
-               mutate(correlation_coef = paste0(correlation_coef, "*")), 
-             aes(x = species_2, y = species_1, label = correlation_coef), fontface = "bold") +
-  geom_label(data = correlation_df_species_names %>%
-               filter(sig == FALSE), 
-             aes(x = species_2, y = species_1, label = correlation_coef)) +
-  scale_fill_gradient2(low = "darkred", high = "darkblue", na.value = "grey", limits = c(-1, 1),
-                       breaks = c(1, 0.5, 0, -0.5, -1), labels = c("+1 Strong +ve", "", "None", "", "-1 Strong -ve")) +
+  
+  # Layer 1: For significant AND ecologically meaningful results (bolded)
+  geom_label(
+    data = . %>% filter(sig == TRUE & abs(correlation_coef) > 0.4), 
+    aes(x = species_2, y = species_1, label = correlation_label), 
+    fontface = "bold"
+  ) +
+  
+  # Layer 2: For all other results (not bolded)
+  geom_label(
+    data = . %>% filter(!(sig == TRUE & abs(correlation_coef) > 0.4)), 
+    aes(x = species_2, y = species_1, label = correlation_label)
+  ) +
+  
+  scale_fill_gradient2(
+    low = "darkred", high = "darkblue", na.value = "grey", limits = c(-1, 1),
+    breaks = c(1, 0.5, 0, -0.5, -1), labels = c("+1 Strong +ve", "", "None", "", "-1 Strong -ve")
+  ) +
   scale_x_discrete(drop = FALSE, guide = guide_axis(n.dodge = 2)) +
   scale_y_discrete(drop = FALSE) +
   facet_wrap(~ landuse, ncol = 1) +
